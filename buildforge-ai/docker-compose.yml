@@ -1,0 +1,72 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://buildforge:buildforge@postgres:5432/buildforge
+      - REDIS_URL=redis://redis:6379
+      - AUTH_SECRET=${AUTH_SECRET}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [bf]
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: buildforge
+      POSTGRES_PASSWORD: buildforge
+      POSTGRES_DB: buildforge
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U buildforge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    networks: [bf]
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+    networks: [bf]
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "scripts/worker.js"]
+    environment:
+      - DATABASE_URL=postgresql://buildforge:buildforge@postgres:5432/buildforge
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - app
+      - redis
+    networks: [bf]
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  bf:
+    driver: bridge

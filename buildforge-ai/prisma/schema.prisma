@@ -1,0 +1,769 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  emailVerified   DateTime?
+  name            String?
+  image           String?
+  passwordHash    String?
+  role            String   @default("USER")
+  bio             String?
+  jobTitle        String?
+  onboardingDone  Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  accounts        Account[]
+  sessions        Session[]
+  memberships     Membership[]
+  projects        Project[] @relation("ProjectOwner")
+  agentRuns       AgentRun[]
+  messages        Message[]
+  notifications   Notification[]
+  comments        Comment[] @relation("CommentAuthor")
+  files           File[]
+  usageMetrics    UsageMetric[]
+  payments        Payment[]
+  auditLogs       AuditLog[]
+  apiKeys         ApiKey[]
+  integrations    Integration[]
+  referrals       Referral[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model Account {
+  id                String @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  name       String
+  keyHash    String    @unique
+  prefix     String
+  scopes     String    @default("")
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usageLogs ApiUsageLog[]
+
+  @@index([userId])
+  @@map("api_keys")
+}
+
+model ApiUsageLog {
+  id        String   @id @default(cuid())
+  apiKeyId  String
+  endpoint  String
+  method    String
+  statusCode Int
+  durationMs Int
+  createdAt DateTime @default(now())
+
+  apiKey ApiKey @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@index([apiKeyId])
+  @@index([createdAt])
+  @@map("api_usage_logs")
+}
+
+// =====================================================
+// ORGANIZATIONS & TEAMS
+// =====================================================
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  logo        String?
+  description String?
+  website     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships  Membership[]
+  projects     Project[]
+  subscriptions Subscription[]
+  invitations  Invitation[]
+  auditLogs    AuditLog[]
+
+  @@index([slug])
+  @@map("organizations")
+}
+
+model Membership {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String
+  role           String   @default("VIEWER")
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("memberships")
+}
+
+model Invitation {
+  id             String   @id @default(cuid())
+  email          String
+  role           String   @default("VIEWER")
+  organizationId String
+  token          String   @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([organizationId])
+  @@map("invitations")
+}
+
+// =====================================================
+// PROJECTS
+// =====================================================
+
+model Project {
+  id             String   @id @default(cuid())
+  name           String
+  slug           String
+  description    String?
+  idea           String
+  status         String   @default("DRAFT")
+  visibility     String   @default("PRIVATE")
+  ownerId        String
+  organizationId String?
+  industry       String?
+  targetMarket   String?
+  tags           String   @default("")
+  metadata       String   @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  owner         User           @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  organization  Organization?  @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  agentRuns     AgentRun[]
+  documents     Document[]
+  knowledgeDocs KnowledgeDoc[]
+  chats         Chat[]
+  messages      Message[]
+  tasks         Task[]
+  reports       Report[]
+  comments      Comment[]
+  notifications Notification[]
+  files         File[]
+  embeddings    Embedding[]
+  versionSnapshots VersionSnapshot[]
+  agentCustomizations AgentCustomization[]
+  sharedLinks    SharedLink[]
+
+  @@unique([ownerId, slug])
+  @@index([ownerId])
+  @@map("projects")
+}
+
+// =====================================================
+// AGENTS
+// =====================================================
+
+model AgentDefinition {
+  id            String   @id @default(cuid())
+  type          String   @unique
+  name          String
+  role          String
+  description   String
+  goal          String
+  systemPrompt  String
+  icon          String
+  color         String
+  capabilities  String   @default("")
+  modelProvider String   @default("openai")
+  modelName     String   @default("gpt-4o")
+  temperature   Float    @default(0.7)
+  maxTokens     Int      @default(4096)
+  isActive      Boolean  @default(true)
+  order         Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("agent_definitions")
+}
+
+model AgentRun {
+  id              String    @id @default(cuid())
+  projectId       String
+  agentType       String
+  status          String    @default("PENDING")
+  input           String    @default("{}")
+  output          String?
+  thinking        String?
+  confidenceScore Float?
+  tokensUsed      Int       @default(0)
+  durationMs      Int?
+  modelProvider   String
+  modelName       String
+  errorMessage    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  triggeredById   String
+
+  project     Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  triggeredBy User    @relation(fields: [triggeredById], references: [id])
+  messages    Message[]
+
+  @@index([projectId])
+  @@index([agentType])
+  @@map("agent_runs")
+}
+
+// =====================================================
+// KNOWLEDGE BASE & RAG
+// =====================================================
+
+model KnowledgeDoc {
+  id          String   @id @default(cuid())
+  projectId   String
+  title       String
+  filename    String
+  mimeType    String
+  size        Int
+  status      String   @default("UPLOADING")
+  storageKey  String
+  url         String?
+  pageCount   Int?
+  wordCount   Int?
+  metadata    String   @default("{}")
+  uploadedBy  String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  chunks  DocumentChunk[]
+
+  @@index([projectId])
+  @@map("knowledge_docs")
+}
+
+model DocumentChunk {
+  id          String   @id @default(cuid())
+  documentId  String
+  content     String
+  chunkIndex  Int
+  tokenCount  Int
+  metadata    String   @default("{}")
+  embeddingId String?
+  createdAt   DateTime @default(now())
+
+  document KnowledgeDoc @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("document_chunks")
+}
+
+model Embedding {
+  id        String   @id @default(cuid())
+  projectId String
+  source    String
+  sourceId  String?
+  content   String
+  vector    String?
+  metadata  String   @default("{}")
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("embeddings")
+}
+
+// =====================================================
+// CHAT
+// =====================================================
+
+model Chat {
+  id            String    @id @default(cuid())
+  projectId     String
+  title         String
+  mode          String    @default("AGENT")
+  agentType     String?
+  userId        String
+  isArchived    Boolean   @default(false)
+  lastMessageAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  project  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([projectId])
+  @@index([userId])
+  @@map("chats")
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  chatId      String
+  projectId   String
+  agentRunId  String?
+  role        String
+  content     String
+  agentType   String?
+  citations   String?
+  toolCalls   String?
+  metadata    String   @default("{}")
+  tokens      Int      @default(0)
+  createdAt   DateTime @default(now())
+  authorId    String?
+
+  chat     Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  agentRun AgentRun? @relation(fields: [agentRunId], references: [id], onDelete: SetNull)
+  author   User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([chatId])
+  @@index([projectId])
+  @@map("messages")
+}
+
+// =====================================================
+// TASKS & SPINTS
+// =====================================================
+
+model Task {
+  id          String   @id @default(cuid())
+  projectId   String
+  title       String
+  description String?
+  status      String   @default("BACKLOG")
+  priority    String   @default("MEDIUM")
+  assigneeId  String?
+  agentType   String?
+  sprintId    String?
+  storyPoints Int?
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sprint  Sprint? @relation(fields: [sprintId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([sprintId])
+  @@map("tasks")
+}
+
+model Sprint {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String
+  goal      String?
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  tasks Task[]
+
+  @@index([projectId])
+  @@map("sprints")
+}
+
+// =====================================================
+// REPORTS
+// =====================================================
+
+model Report {
+  id          String   @id @default(cuid())
+  projectId   String
+  type        String
+  title       String
+  content     String
+  summary     String?
+  pdfUrl      String?
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("reports")
+}
+
+// =====================================================
+// DOCUMENTS
+// =====================================================
+
+model Document {
+  id        String   @id @default(cuid())
+  projectId String
+  title     String
+  type      String
+  content   String
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("documents")
+}
+
+// =====================================================
+// COMMENTS, NOTIFICATIONS, MENTIONS
+// =====================================================
+
+model Comment {
+  id          String   @id @default(cuid())
+  projectId   String?
+  authorId    String
+  body        String
+  entityType  String?
+  entityId    String?
+  parentId    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project  Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author   User      @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  parent   Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  Comment[] @relation("CommentReplies")
+
+  @@index([projectId])
+  @@index([authorId])
+  @@map("comments")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  projectId String?
+  type      String
+  title     String
+  body      String?
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// =====================================================
+// FILES
+// =====================================================
+
+model File {
+  id         String   @id @default(cuid())
+  projectId  String?
+  uploadedBy String
+  name       String
+  size       Int
+  mimeType   String
+  storageKey String
+  url        String?
+  createdAt  DateTime @default(now())
+
+  project  Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader User     @relation(fields: [uploadedBy], references: [id])
+
+  @@index([projectId])
+  @@map("files")
+}
+
+// =====================================================
+// BILLING
+// =====================================================
+
+model Subscription {
+  id                   String   @id @default(cuid())
+  organizationId       String?
+  userId               String?
+  stripeCustomerId     String?  @unique
+  stripeSubscriptionId String?  @unique
+  stripePriceId        String?
+  plan                 String   @default("FREE")
+  status               String   @default("ACTIVE")
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean  @default(false)
+  canceledAt           DateTime?
+  trialEndsAt          DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  invoices     Invoice[]
+
+  @@index([organizationId])
+  @@index([userId])
+  @@map("subscriptions")
+}
+
+model Invoice {
+  id              String   @id @default(cuid())
+  subscriptionId  String
+  stripeInvoiceId String?  @unique
+  number          String?
+  amount          Int
+  currency        String   @default("usd")
+  status          String   @default("DRAFT")
+  pdfUrl          String?
+  hostedUrl       String?
+  periodStart     DateTime
+  periodEnd       DateTime
+  paidAt          DateTime?
+  createdAt       DateTime @default(now())
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@map("invoices")
+}
+
+model Payment {
+  id              String   @id @default(cuid())
+  userId          String
+  stripePaymentId String?  @unique
+  amount          Int
+  currency        String   @default("usd")
+  status          String   @default("PENDING")
+  description     String?
+  createdAt       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("payments")
+}
+
+// =====================================================
+// USAGE METRICS & ANALYTICS
+// =====================================================
+
+model UsageMetric {
+  id        String   @id @default(cuid())
+  userId    String
+  metric    String
+  value     Int      @default(1)
+  metadata  String   @default("{}")
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, metric])
+  @@index([createdAt])
+  @@map("usage_metrics")
+}
+
+// =====================================================
+// AUDIT LOGS
+// =====================================================
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  userId         String?
+  organizationId String?
+  action         String
+  resource       String
+  resourceId     String?
+  metadata       String   @default("{}")
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// =====================================================
+// VERSION CONTROL (Feature #4)
+// =====================================================
+
+model VersionSnapshot {
+  id           String   @id @default(cuid())
+  projectId    String
+  version      Int
+  label        String   @default("")
+  agentOutputs String   @default("{}")
+  createdAt    DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, version])
+  @@index([projectId])
+  @@map("version_snapshots")
+}
+
+// =====================================================
+// PROJECT TEMPLATES (Feature #3)
+// =====================================================
+
+model ProjectTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  description String
+  category    String
+  idea        String
+  industry    String
+  targetMarket String
+  tags        String   @default("")
+  icon        String   @default("Box")
+  popular     Boolean  @default(false)
+  useCount    Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([category])
+  @@map("project_templates")
+}
+
+// =====================================================
+// INTEGRATIONS (Feature #10)
+// =====================================================
+
+model Integration {
+  id             String   @id @default(cuid())
+  userId         String
+  name           String
+  displayName    String
+  description    String
+  icon           String
+  category       String
+  connected      Boolean  @default(false)
+  config         String   @default("{}")
+  lastUsedAt     DateTime?
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("integrations")
+}
+
+// =====================================================
+// REFERRALS (Feature #15)
+// =====================================================
+
+model Referral {
+  id           String   @id @default(cuid())
+  referrerId   String
+  code         String   @unique
+  referredEmail String?
+  status       String   @default("PENDING")
+  rewardClaimed Boolean @default(false)
+  createdAt    DateTime @default(now())
+
+  referrer User @relation(fields: [referrerId], references: [id], onDelete: Cascade)
+
+  @@index([referrerId])
+  @@index([code])
+  @@map("referrals")
+}
+
+// =====================================================
+// AGENT CUSTOMIZATION (Feature #6)
+// =====================================================
+
+model AgentCustomization {
+  id           String   @id @default(cuid())
+  projectId    String
+  agentType    String
+  customPrompt String?
+  temperature  Float?
+  maxTokens    Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, agentType])
+  @@index([projectId])
+  @@map("agent_customizations")
+}
+
+// =====================================================
+// SHARED PROJECTS / CLIENT PORTAL (Feature #8)
+// =====================================================
+
+model SharedLink {
+  id        String   @id @default(cuid())
+  projectId String
+  token     String   @unique
+  password  String?
+  expiresAt DateTime?
+  viewCount Int      @default(0)
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([token])
+  @@map("shared_links")
+}
